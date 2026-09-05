@@ -1,17 +1,43 @@
 # Git internal files
 .git/
 
-# .agent folder
+# Agent metadata
 .agents/
 skills-lock.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.venv*/
+venv/
+
 # Environment / secrets
 .env
 .env.*
 !.env.example
+*.pem
+*.key
 
-# macOS
+# macOS / IDE
 .DS_Store
-
-# IDE
 .vscode/
 .idea/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Local outputs
+artifacts/
+output/
+logs/
