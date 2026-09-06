@@ -1,0 +1,6 @@
+profile: small
+counts:
+  patients: 25000
+  encounters: 100000
+  claims: 75000
+  claim_lines: 250000

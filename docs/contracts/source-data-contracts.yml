@@ -1,0 +1,31 @@
+version: v1
+purpose: Synthetic source contracts for metadata-driven ingestion; no production PHI.
+profiles: [tiny, small, medium]
+sources:
+  - name: clinical_provider
+    engine: postgresql
+    schema: clinical
+    tables:
+      - {name: patients, grain: one patient, primary_key: patient_id, incremental_key: [updated_at, patient_id], load_type: INCREMENTAL, sensitivity: direct_identifier_phi}
+      - {name: providers, grain: one provider, primary_key: provider_id, incremental_key: [updated_at, provider_id], load_type: INCREMENTAL, sensitivity: synthetic_identifier}
+      - {name: facilities, grain: one facility, primary_key: facility_id, incremental_key: [updated_at, facility_id], load_type: INCREMENTAL, sensitivity: low}
+      - {name: provider_facility_affiliation, grain: provider-facility period, primary_key: affiliation_id, incremental_key: [updated_at, affiliation_id], load_type: INCREMENTAL, sensitivity: low}
+      - {name: encounters, grain: one care encounter, primary_key: encounter_id, incremental_key: [updated_at, encounter_id], load_type: INCREMENTAL, sensitivity: phi}
+      - {name: diagnoses, grain: one encounter diagnosis, primary_key: diagnosis_id, incremental_key: [updated_at, diagnosis_id], load_type: INCREMENTAL, sensitivity: phi}
+      - {name: procedures, grain: one encounter procedure, primary_key: procedure_id, incremental_key: [updated_at, procedure_id], load_type: INCREMENTAL, sensitivity: phi}
+      - {name: observations, grain: one observation, primary_key: observation_id, incremental_key: [updated_at, observation_id], load_type: INCREMENTAL, sensitivity: phi}
+      - {name: medications, grain: one medication reference, primary_key: medication_id, incremental_key: [updated_at, medication_id], load_type: FULL, sensitivity: low}
+      - {name: prescriptions, grain: one medication order, primary_key: prescription_id, incremental_key: [updated_at, prescription_id], load_type: INCREMENTAL, sensitivity: phi}
+  - name: member_claims
+    engine: azure_sql
+    schema: payer
+    tables:
+      - {name: members, grain: one member, primary_key: member_id, incremental_key: [modified_at, member_id], load_type: INCREMENTAL, sensitivity: direct_identifier_phi}
+      - {name: plans, grain: one insurance product, primary_key: plan_id, incremental_key: [modified_at, plan_id], load_type: FULL, sensitivity: low}
+      - {name: member_enrollment, grain: one coverage segment, primary_key: enrollment_id, incremental_key: [modified_at, enrollment_id], load_type: INCREMENTAL, sensitivity: phi}
+      - {name: claims, grain: one claim header/version, primary_key: claim_id, incremental_key: [modified_at, claim_id], load_type: INCREMENTAL, sensitivity: phi_financial}
+      - {name: claim_lines, grain: one service line/version, primary_key: claim_line_id, incremental_key: [modified_at, claim_line_id], load_type: INCREMENTAL, sensitivity: phi_financial}
+      - {name: claim_diagnoses, grain: one claim-diagnosis relation, primary_key: claim_diagnosis_id, incremental_key: [modified_at, claim_diagnosis_id], load_type: INCREMENTAL, sensitivity: phi}
+      - {name: authorizations, grain: one authorization request/version, primary_key: authorization_id, incremental_key: [modified_at, authorization_id], load_type: INCREMENTAL, sensitivity: phi}
+      - {name: payments, grain: one remittance event, primary_key: payment_id, incremental_key: [modified_at, payment_id], load_type: INCREMENTAL, sensitivity: phi_financial}
+      - {name: claim_adjustments, grain: one adjustment event, primary_key: adjustment_id, incremental_key: [modified_at, adjustment_id], load_type: INCREMENTAL, sensitivity: phi_financial}

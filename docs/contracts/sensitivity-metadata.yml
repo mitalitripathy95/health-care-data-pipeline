@@ -1,0 +1,11 @@
+version: v1
+classification_definitions:
+  direct_identifier_phi: Synthetic name/contact/national identifier; restricted and tokenized before broad consumption.
+  phi: Synthetic clinical or coverage information; restricted and de-identified for Gold.
+  phi_financial: Synthetic claim/payment amounts and health information; restricted and governed.
+  synthetic_identifier: Synthetic provider identifier; not a real NPI.
+  low: Synthetic reference or operational data.
+controls:
+  tokenization: HMAC-SHA-256 with key resolved at runtime from Azure Key Vault
+  broad_layer: No raw names, contact fields, addresses, or source identifiers in broad Gold
+  disclaimer: HIPAA-aligned technical controls using synthetic data; not formal HIPAA compliance

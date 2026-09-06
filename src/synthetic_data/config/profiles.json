@@ -1,0 +1,1 @@
+{"tiny":{"patients":1000,"encounters":3000,"claims":2000,"claim_lines":5000},"small":{"patients":25000,"encounters":100000,"claims":75000,"claim_lines":250000},"medium":{"patients":100000,"encounters":500000,"claims":350000,"claim_lines":1200000}}

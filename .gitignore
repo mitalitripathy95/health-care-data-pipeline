@@ -41,3 +41,4 @@ crash.log
 artifacts/
 output/
 logs/
+data/generated/

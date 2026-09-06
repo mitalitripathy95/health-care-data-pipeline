@@ -1,0 +1,6 @@
+profile: medium
+counts:
+  patients: 100000
+  encounters: 500000
+  claims: 350000
+  claim_lines: 1200000

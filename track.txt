@@ -1,0 +1,564 @@
+# Phase 1 local implementation status
+
+  ## Phase 1 — Source systems and synthetic data
+
+  Completed locally:
+
+  ### PostgreSQL schemas
+
+  Tables:
+
+  patients
+  providers
+  facilities
+  provider_facility_affiliation
+  encounters
+  diagnoses
+  procedures
+  observations
+  medications
+  prescriptions
+
+  Added:
+
+  - DDL
+  - Primary keys
+  - Foreign keys
+  - Unique constraints
+  - Check constraints
+  - Indexes
+  - updated_at columns
+  - Soft-delete behavior
+  - Schema version metadata
+  - Incremental extraction support
+
+  ### Azure SQL schemas
+
+  Tables:
+
+  members
+  plans
+  member_enrollment
+  claims
+  claim_lines
+  claim_diagnoses
+  authorizations
+  payments
+  claim_adjustments
+
+  Added:
+
+  - DDL
+  - Constraints
+  - Indexes
+  - modified_at
+  - Claim lifecycle columns
+  - Versioning columns
+  - Financial integrity constraints
+  - Soft-delete and void handling
+
+  ### Synthetic data generator
+
+  Implemented:
+
+  src/synthetic_data/
+
+  Including:
+
+  - Deterministic random seed handling
+  - Patient/member identity factory
+  - Provider factory
+  - Facility factory
+  - Encounter factory
+  - Diagnosis factory
+  - Procedure factory
+  - Observation factory
+  - Medication factory
+  - Prescription factory
+  - Plan/enrollment factory
+  - Claim factory
+  - Claim-line factory
+  - Authorization factory
+  - Payment factory
+  - Adjustment factory
+
+  ### Profiles
+
+  Implemented:
+
+   Profile    Patients/Members    Encounters     Claims    Claim Lines
+  ━━━━━━━━━  ━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━  ━━━━━━━━━  ━━━━━━━━━━━━━
+   Tiny                  1,000         3,000      2,000          5,000
+  ─────────  ──────────────────  ────────────  ─────────  ─────────────
+   Small                25,000       100,000     75,000        250,000
+  ─────────  ──────────────────  ────────────  ─────────  ─────────────
+   Medium              100,000       500,000    350,000      1,200,000
+
+  We will not use Medium in the Azure trial unless a separate cost review approves it.
+
+  ### Generation scenarios
+
+  Implemented for local DQ/incremental fixtures:
+
+  initial_load
+  incremental_01
+  incremental_02
+  quality_failures
+  schema_evolution
+
+  Scenarios include:
+
+  - New members and patients
+  - New encounters and claims
+  - Demographic corrections
+  - Identical timestamps across records
+  - Pending-to-paid claim changes
+  - Claim reversals
+  - Replacement claims
+  - Late-arriving diagnoses
+  - Late-arriving claim lines
+  - Soft deletes
+  - Duplicate records
+  - Broken foreign keys
+  - Invalid financial amounts
+  - Unexpected nulls
+  - Nullable column addition
+  - Breaking type-change simulation
+
+  ### Validation
+
+  Implemented locally:
+
+  - Referential-integrity validation
+  - Financial validation
+  - Distribution validation
+  - Determinism validation
+  - Row-count validation
+  - Checksum generation
+  - Generation manifests
+  - Bad-data scenario assertions
+  - Chunked and restartable generation
+
+  ### CLI
+
+  Implemented interface:
+
+  Note: database connectivity/load adapters, new-record CDC, schema-evolution fixtures,
+  and cloud landing are intentionally deferred to later phases.
+
+  python -m synthetic_data.cli generate \
+    --profile tiny \
+    --seed 20260905 \
+    --batch-id initial
+
+  python -m synthetic_data.cli load \
+    --target all \
+    --batch-id initial
+
+  python -m synthetic_data.cli mutate \
+    --scenario incremental_01 \
+    --batch-id inc-001
+
+  python -m synthetic_data.cli validate \
+    --batch-id inc-001
+
+  ———
+
+  ## Phase 2 — Terraform and Azure infrastructure
+
+  Not started yet.
+
+  Need to build all Terraform code before deployment:
+
+  - Terraform provider configuration
+  - Backend/bootstrap structure
+  - Resource group
+  - Storage account
+  - ADLS Gen2 filesystem
+  - Key Vault
+  - Azure Container Registry
+  - Log Analytics
+  - Application Insights where needed
+  - Budget and action group
+  - PostgreSQL Flexible Server
+  - Azure SQL Database
+  - Azure Container Apps Job
+  - Azure Data Factory
+  - Azure Databricks workspace
+  - Managed identities
+  - Role assignments
+  - Diagnostic settings
+  - Firewall rules
+  - Network configuration
+  - Secrets references
+  - Environment variables
+  - Tiny and Small profiles
+  - Demo variables
+  - Outputs
+  - Terraform validation
+  - Terraform plan safety checks
+  - Destroy support
+
+  No Terraform deployment should happen until all infrastructure code is finished and validated locally.
+
+  ———
+
+  ## Phase 3 — ADF ingestion
+
+  Not started yet.
+
+  Need to build:
+
+  - Control schema
+  - source_system
+  - ingestion_config
+  - pipeline_run
+  - table_run
+  - watermark_state
+  - batch_manifest
+  - dq_result
+  - job_dependency
+  - reprocess_request
+  - reconciliation_result
+  - pipeline_health
+
+  ADF pipelines:
+
+  pl_master_ingestion
+  pl_ingest_table
+  pl_validate_landing
+  pl_trigger_databricks
+  pl_snowflake_publish
+  pl_backfill_orchestrator
+  pl_health_monitor
+
+  Need to implement:
+
+  - Metadata-driven ingestion
+  - Full snapshots
+  - Incremental extraction
+  - Composite watermark logic
+  - Retry behavior
+  - Locks
+  - Temporary landing paths
+  - Immutable Bronze raw paths
+  - Manifest publication
+  - Source-to-target reconciliation
+  - Duplicate-trigger protection
+  - Failure recovery
+  - Backfills
+
+  ———
+
+  ## Phase 4 — Databricks Bronze
+
+  Not started yet.
+
+  Need to build Spark code for:
+
+  - Bronze raw ingestion
+  - JSON/CSV/Parquet parsing
+  - Delta table creation
+  - Schema enforcement
+  - Schema evolution rules
+  - Batch manifests
+  - Audit columns
+  - Source metadata
+  - Quarantine for unreadable records
+  - Idempotent processing
+  - Unity Catalog resource definitions
+  - Databricks job configuration
+  - Job parameters
+  - Cluster policies
+  - Job cluster sizing
+
+  ———
+
+  ## Phase 5 — Databricks Silver
+
+  Not started yet.
+
+  Need to implement Spark transformations for:
+
+  - Standardization
+  - Type casting
+  - Null handling
+  - Deduplication
+  - Late-arriving data
+  - Survivorship rules
+  - Claim lifecycle normalization
+  - Financial rules
+  - Referential-quality checks
+  - Data-quality quarantine
+  - Tokenization/de-identification
+  - Sensitive and restricted Silver schemas
+  - Data-quality metrics
+  - Reconciliation metrics
+
+  Privacy processing will include HMAC-SHA-256 tokenization with the key resolved from Azure Key Vault.
+
+  ———
+
+  ## Phase 6 — Databricks Gold
+
+  Not started yet.
+
+  Need to build Spark jobs for:
+
+  ### Dimensions
+
+  dim_patient
+  dim_member
+  dim_provider
+  dim_facility
+  dim_plan
+  dim_date
+  dim_diagnosis
+  dim_procedure
+  dim_medication
+
+  ### Facts
+
+  fact_encounter
+  fact_claim
+  fact_claim_line
+  fact_payment
+  fact_authorization
+  fact_observation
+  fact_prescription
+
+  ### Bridges
+
+  bridge_claim_diagnosis
+  bridge_provider_facility
+  bridge_member_enrollment
+
+  Need to include:
+
+  - Surrogate keys
+  - SCD Type 2 where appropriate
+  - Inferred dimension members
+  - Unknown dimension members
+  - Effective dates
+  - Current-row indicators
+  - Fact-to-dimension reconciliation
+  - Gold Parquet export
+  - Export manifest
+
+  ———
+
+  ## Phase 7 — Snowflake
+
+  Not started yet.
+
+  Need to build:
+
+  - Database creation scripts
+  - Schemas
+  - Warehouses
+  - Roles
+  - Grants
+  - External stage configuration
+  - Storage integration or secure credential strategy
+  - Transient staging tables
+  - Curated serving tables
+  - COPY INTO procedures
+  - Manifest validation
+  - Transactional MERGE procedures
+  - Duplicate protection
+  - Load audit tables
+  - Error tables
+  - Masking policies
+  - Row-access policies
+  - Secure views
+  - KPI tables
+  - Snowflake tests
+
+  The planned loading flow is:
+
+  ADLS Gold Parquet
+         ↓
+  Snowflake external stage
+         ↓
+  COPY INTO transient staging tables
+         ↓
+  Validate manifest and row counts
+         ↓
+  MERGE into curated Snowflake tables
+         ↓
+  Refresh KPI tables/views
+
+  ———
+
+  ## Phase 8 — KPIs and serving layer
+
+  Not started yet.
+
+  Planned KPIs include:
+
+  ### Claims
+
+  - Claim count
+  - Billed amount
+  - Allowed amount
+  - Paid amount
+  - Paid-to-allowed ratio
+  - Denial rate
+  - Adjustment rate
+
+  ### Clinical
+
+  - Encounter volume
+  - Encounters per member
+  - Average length of stay
+  - Diagnosis volume
+  - Procedure utilization
+  - Observation abnormality rate
+  - Prescription volume
+
+  ### Financial
+
+  - Allowed PMPM
+  - Paid PMPM
+  - Cost by plan
+  - Cost by provider specialty
+  - Cost by facility
+  - Cost by region
+
+  ### Operational
+
+  - Batch freshness
+  - Ingestion latency
+  - Pipeline success rate
+  - Reconciliation rate
+  - Quarantine rate
+  - Backfill completion
+  - Cost per batch
+
+  These will be stored in Snowflake KPI tables and exposed through secure views.
+
+  ———
+
+  ## Phase 9 — CI/CD
+
+  Only the initial PR-check workflow exists.
+
+  Still to build:
+
+  .github/workflows/
+    pr-checks.yml
+    terraform-plan.yml
+    deploy-demo.yml
+    run-scenario.yml
+    backfill.yml
+    destroy-demo.yml
+
+  CI/CD will include:
+
+  - Python unit tests
+  - PySpark tests
+  - SQL validation
+  - Terraform formatting
+  - Terraform validation
+  - Terraform plan
+  - Databricks bundle validation
+  - ADF artifact validation
+  - Snowflake migration validation
+  - Secret scanning
+  - Container image build
+  - Container vulnerability scanning
+  - Azure OIDC authentication
+  - Protected demo environment
+  - Protected destroy environment
+  - Manual approval before apply
+  - Manual approval before destroy
+
+  ———
+
+  ## Phase 10 — Monitoring and observability
+
+  Not started yet.
+
+  Need to implement:
+
+  - Azure Monitor queries
+  - Log Analytics queries
+  - ADF pipeline monitoring
+  - Databricks job monitoring
+  - Snowflake load monitoring
+  - Freshness alerts
+  - DQ failure alerts
+  - Quarantine alerts
+  - Reconciliation alerts
+  - Failed dependency alerts
+  - Cost alerts
+  - Dashboard definitions
+  - Evidence export
+
+  ———
+
+  ## Phase 11 — End-to-end deployment and testing
+
+  This will be done last, after all code is complete.
+
+  Deployment sequence:
+
+  terraform init
+  terraform fmt -check
+  terraform validate
+  terraform plan
+  terraform apply
+
+  Then:
+
+  1. Create source schemas.
+  2. Generate Tiny data.
+  3. Load PostgreSQL and Azure SQL.
+  4. Run ADF initial ingestion.
+  5. Run Bronze Spark job.
+  6. Run Silver Spark job.
+  7. Run Gold Spark job.
+  8. Export Gold data to ADLS.
+  9. Load Snowflake.
+  10. Run KPI procedures.
+  11. Execute reconciliation tests.
+  12. Execute incremental scenarios.
+  13. Execute duplicate-trigger tests.
+  14. Execute failure/recovery tests.
+  15. Execute backfill tests.
+  16. Execute privacy/tokenization tests.
+  17. Capture monitoring and cost evidence.
+  18. Run teardown.
+
+  ———
+
+  # Immediate next step
+
+  The next implementation task is:
+
+  Phase 1A — Build complete PostgreSQL and Azure SQL DDL
+
+  I will create:
+
+  database/postgres/ddl/001_clinical_provider_schema.sql
+  database/azure_sql/ddl/001_member_claims_schema.sql
+  database/azure_sql/ddl/002_control_schema.sql
+  docs/contracts/source-data-contracts.yml
+  docs/contracts/sensitivity-metadata.yml
+
+  Then I will implement the deterministic Python generators and tests.
+
+  The important point is that we will not pause after creating only a partial cloud architecture. We will first complete:
+
+  Source schemas
+  Synthetic generators
+  ADF
+  Databricks Spark
+  Snowflake
+  Terraform
+  CI/CD
+  Monitoring
+  Backfills
+  Testing
+
+  Only after all of those are coded and locally validated will you run the Azure deployment.
