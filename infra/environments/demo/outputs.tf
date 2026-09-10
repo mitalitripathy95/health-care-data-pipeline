@@ -1,0 +1,11 @@
+output "resource_group_name" { value = module.core.resource_group_name }
+output "storage_account_name" { value = module.core.storage_account_name }
+output "storage_filesystem_name" { value = module.core.storage_filesystem_name }
+output "storage_dfs_endpoint" { value = module.core.storage_dfs_endpoint }
+output "key_vault_name" { value = module.core.key_vault_name }
+output "postgres_fqdn" { value = module.data.postgres_fqdn }
+output "azure_sql_fqdn" { value = module.data.azure_sql_fqdn }
+output "data_factory_name" { value = module.compute.data_factory_name }
+output "databricks_workspace_url" { value = module.compute.databricks_workspace_url }
+output "acr_login_server" { value = module.core.acr_login_server }
+output "log_analytics_workspace_id" { value = var.create_monitoring ? module.monitoring[0].log_analytics_workspace_id : null }

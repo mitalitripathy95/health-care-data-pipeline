@@ -1,0 +1,14 @@
+# Copy to backend.tf only when using a separately bootstrapped remote state account.
+# The state storage account must exist before `terraform init` and must not be
+# managed by this stack to avoid a bootstrap dependency cycle.
+#
+# terraform {
+#   backend "azurerm" {
+#     resource_group_name  = "hcpipe-tfstate-rg"
+#     storage_account_name = "hcpipe..."
+#     container_name       = "tfstate"
+#     key                  = "demo.tfstate"
+#     use_azuread_auth     = true
+#   }
+# }
+

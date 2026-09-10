@@ -1,0 +1,10 @@
+resources:
+  jobs:
+    wf_bronze_ingestion:
+      permissions:
+        - level: CAN_MANAGE_RUN
+          user_name: ${workspace.current_user.userName}
+    wf_silver_transformation:
+      permissions:
+        - level: CAN_MANAGE_RUN
+          user_name: ${workspace.current_user.userName}

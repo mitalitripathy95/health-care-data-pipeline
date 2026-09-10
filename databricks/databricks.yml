@@ -1,0 +1,67 @@
+bundle:
+  name: healthcare-data-pipeline
+
+databricks_cli_version: ">=0.218.0"
+
+include:
+  - resources/*.yml
+
+artifacts:
+  healthcare_bronze_wheel:
+    type: whl
+    path: .
+    build: python -m build --wheel
+
+variables:
+  workspace_host:
+    description: Azure Databricks workspace URL from Terraform output databricks_workspace_url.
+  catalog_name:
+    description: Existing Unity Catalog catalog used by the healthcare demo.
+    default: healthcare_demo
+  bronze_schema:
+    description: Unity Catalog schema for source-aligned Bronze Delta tables.
+    default: bronze
+  restricted_schema:
+    description: Unity Catalog schema containing Silver records with restricted identifiers.
+    default: silver_restricted
+  deidentified_schema:
+    description: Unity Catalog schema containing tokenized, de-identified Silver records.
+    default: silver_deidentified
+  quarantine_schema:
+    description: Unity Catalog schema for rejected source records.
+    default: quarantine
+  manifest_path:
+    description: Optional Delta path containing enriched MANIFEST and DEPENDENCY records.
+    default: ""
+  control_jdbc_url:
+    description: Optional Azure SQL JDBC URL for the control metadata database.
+    default: ""
+  secret_scope:
+    description: Databricks secret scope backed by Azure Key Vault.
+    default: healthcare
+  hmac_key_name:
+    description: Azure Key Vault-backed Databricks secret containing the HMAC key.
+    default: silver-hmac-key
+  token_version:
+    description: Version namespace for HMAC tokens.
+    default: v1
+  transform_version:
+    description: Silver transformation contract version.
+    default: v1
+  event_watermark:
+    description: Optional ISO date/timestamp watermark for late-arriving events.
+    default: ""
+  node_type_id:
+    description: Small Azure VM type available in the selected Databricks region.
+    default: Standard_D4ds_v5
+  spark_version:
+    description: Pinned Databricks Runtime LTS version; verify regional availability before deploy.
+    default: 15.4.x-scala2.12
+
+targets:
+  demo:
+    mode: development
+    default: true
+    workspace:
+      host: ${var.workspace_host}
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

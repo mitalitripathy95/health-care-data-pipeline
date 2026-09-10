@@ -6,11 +6,23 @@ A cloud-first portfolio demonstration of a synthetic healthcare claims and clini
 
 ## Current status
 
-Phase 0 (repository and workstation foundation) is complete. Phase 1 source schemas,
-contracts, deterministic synthetic data generation, validation, mutation fixtures, and
-local loader verification are implemented. No cloud resources are deployed by this
-repository yet. Read [`PROJECT_PLAN.md`](PROJECT_PLAN.md) and the Phase 1 runbook before
-implementation of the cloud layers.
+**Phases 0–4 are complete as code and static validation only.** Phase 1 provides source schemas,
+contracts, deterministic synthetic data generation, validation, and mutation fixtures.
+Phase 2 provides the Terraform infrastructure. Phase 3 provides metadata-driven ADF
+ingestion, Key Vault-backed linked services, parameterized datasets, immutable Bronze
+landing, composite watermarks, audit/locking procedures, and metadata for all 19 source
+tables. Phase 4 provides the manifest-gated Databricks Bronze wheel and Asset Bundle,
+explicit contracts for all 19 tables, controlled schema drift, corrupt-row quarantine,
+Delta audit/registry tables, and deterministic retry/backfill behavior on trial-safe
+ephemeral compute.
+
+No Azure resources have been deployed. Azure/Databricks deployment, Unity Catalog
+acceptance, and Spark/Delta runtime testing remain deferred until all project phases are
+implemented. See [`PROJECT_PLAN.md`](PROJECT_PLAN.md), the
+[Phase 3 architecture](docs/architecture/phase-3-adf-ingestion.md),
+[Phase 3 deployment/test runbook](docs/runbooks/phase-3-adf-ingestion.md),
+[Phase 4 architecture](docs/architecture/phase-4-databricks-bronze.md), and
+[Phase 4 deployment/test runbook](docs/runbooks/phase-4-databricks-bronze.md).
 
 ## Local quick start
 
@@ -24,9 +36,10 @@ make preflight
 make cost-preflight
 ```
 
-If a cloud CLI is unavailable, local Python tests and Phase 1 generation can still run.
-Cloud deployment is intentionally blocked until all application and infrastructure code
-is prepared, reviewed, and account-specific values are supplied securely.
+Local Python and Terraform commands are for static validation only. The actual generator,
+databases, ingestion, Spark transformations, and serving workloads will run in Azure.
+Cloud deployment is intentionally blocked until all application and infrastructure code is
+prepared, reviewed, and account-specific values are supplied securely.
 
 ## Phase 1 local synthetic data
 

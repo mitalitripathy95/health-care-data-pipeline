@@ -1,0 +1,1 @@
+# The root environment creates the real provider lock file during terraform init.

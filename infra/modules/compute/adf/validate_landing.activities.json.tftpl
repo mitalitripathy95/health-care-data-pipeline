@@ -1,0 +1,29 @@
+[
+  {
+    "name": "Validate row count and immutable path",
+    "type": "IfCondition",
+    "typeProperties": {
+      "expression": {
+        "type": "Expression",
+        "value": "@and(equals(int(pipeline().parameters.source_row_count), int(pipeline().parameters.landed_row_count)), contains(pipeline().parameters.bronze_path, '/batch_id='), contains(pipeline().parameters.bronze_path, '/run_id='), or(equals(int(pipeline().parameters.source_row_count), 0), greaterOrEquals(int(pipeline().parameters.file_count), 1)))"
+      },
+      "ifTrueActivities": [
+        {
+          "name": "Landing validation passed",
+          "type": "Wait",
+          "typeProperties": { "waitTimeInSeconds": 1 }
+        }
+      ],
+      "ifFalseActivities": [
+        {
+          "name": "Fail landing validation",
+          "type": "Fail",
+          "typeProperties": {
+            "errorCode": "LANDING_VALIDATION_FAILED",
+            "message": "Source and landed row counts differ, a nonempty extract has no file, or the immutable Bronze path contract is invalid."
+          }
+        }
+      ]
+    }
+  }
+]

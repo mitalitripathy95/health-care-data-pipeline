@@ -166,7 +166,7 @@
 
   ## Phase 2 — Terraform and Azure infrastructure
 
-  Not started yet.
+  Terraform modules, demo composition, static validation, safety scripts, and a GitHub Actions validation workflow are implemented and verified (code only; not deployed).
 
   Need to build all Terraform code before deployment:
 
@@ -205,72 +205,123 @@
 
   ## Phase 3 — ADF ingestion
 
-  Not started yet.
+  Complete as code and statically validated; not deployed or runtime-tested in Azure.
 
-  Need to build:
+  Implemented control schema:
 
-  - Control schema
   - source_system
   - ingestion_config
   - pipeline_run
   - table_run
   - watermark_state
+  - ingestion_lock
   - batch_manifest
   - dq_result
   - job_dependency
   - reprocess_request
   - reconciliation_result
   - pipeline_health
+  - Transactional begin, publish, failure, and dependency procedures
 
-  ADF pipelines:
+  Implemented metadata:
 
-  pl_master_ingestion
-  pl_ingest_table
-  pl_validate_landing
-  pl_trigger_databricks
-  pl_snowflake_publish
-  pl_backfill_orchestrator
-  pl_health_monitor
+  - 10 PostgreSQL clinical tables
+  - 9 Azure SQL payer tables
+  - 17 composite-watermark incremental loads
+  - 2 full snapshot loads: clinical.medications and payer.plans
 
-  Need to implement:
+  Implemented ADF resources:
 
-  - Metadata-driven ingestion
-  - Full snapshots
-  - Incremental extraction
-  - Composite watermark logic
-  - Retry behavior
-  - Locks
-  - Temporary landing paths
-  - Immutable Bronze raw paths
-  - Manifest publication
-  - Source-to-target reconciliation
-  - Duplicate-trigger protection
-  - Failure recovery
-  - Backfills
+  - ls_key_vault
+  - ls_postgresql_clinical
+  - ls_azure_sql_payer
+  - ls_adls_lake
+  - ds_postgresql_table
+  - ds_azure_sql_table
+  - ds_bronze_parquet
+  - pl_master_ingestion
+  - pl_ingest_table
+  - pl_validate_landing
+  - tr_daily_ingestion, disabled by default
+
+  Implemented ingestion behavior:
+
+  - Metadata-driven source selection
+  - Full snapshots and bounded incremental extraction
+  - Composite timestamp/primary-key watermarks
+  - Three retries with 30-second intervals
+  - Per-table locking and duplicate-batch protection
+  - Immutable Bronze raw paths scoped by batch_id and run_id
+  - Row-count, file-count, and path validation before publication
+  - Transactional manifest publication and watermark advancement
+  - Failure audit and lock release without watermark advancement
+  - Bounded backfills that do not advance production watermarks
+  - Phase 4 readiness through control.job_dependency only after master success
+
+  Implemented verification and documentation:
+
+  - Static ADF artifact validator
+  - Unit tests for security and orchestration invariants
+  - Phase 3 architecture document
+  - Future Azure deployment and runtime-test runbook
+
+  Deferred to later phases:
+
+  - pl_trigger_databricks: Phase 4 Databricks orchestration
+  - pl_snowflake_publish: Snowflake serving phase
+  - pl_health_monitor: later operational monitoring phase
+  - Dedicated pl_backfill_orchestrator: bounded backfill is currently supported through
+    master/child parameters; a standalone orchestrator is deferred
+
+  Pending final Azure deployment phase:
+
+  - Deploy ADF and control objects
+  - Test linked services and managed-identity/RBAC access
+  - Run Tiny ingestion and reconcile all 19 tables
+  - Test duplicate batch, equal-timestamp keys, partial failure/recovery, and backfill
+  - Confirm failed runs do not publish manifests/readiness or advance watermarks
 
   ———
 
   ## Phase 4 — Databricks Bronze
 
-  Not started yet.
+  Completed as repository code and credential-free static validation; not deployed.
 
-  Need to build Spark code for:
+  Implemented Spark/Delta code:
 
-  - Bronze raw ingestion
-  - JSON/CSV/Parquet parsing
-  - Delta table creation
-  - Schema enforcement
-  - Schema evolution rules
-  - Batch manifests
-  - Audit columns
-  - Source metadata
-  - Quarantine for unreadable records
-  - Idempotent processing
-  - Unity Catalog resource definitions
-  - Databricks job configuration
-  - Job parameters
-  - Cluster policies
-  - Job cluster sizing
+  - Azure SQL control-table reader plus controlled Delta manifest alternative
+  - Published/reconciled manifest and READY-dependency gating
+  - Immutable raw-path identity enforcement
+  - Version v1 schema contracts for all 19 Phase 1 source tables
+  - Parquet and controlled JSON/CSV parsing
+  - Exact, nullable-additive, and safe-widening schema rules
+  - Rejection of missing required, narrowing, incompatible, and non-nullable additions
+  - Corrupt-record quarantine for JSON/CSV
+  - Source-aligned Bronze Delta targets with nine ingestion/source metadata columns
+  - Delta batch registry and processing audit tables
+  - Batch/table idempotency, successful-rerun skip, deterministic retry, and backfill logic
+  - Transactional Azure SQL dependency updates to Bronze COMPLETED and Silver READY
+
+  Implemented workflow and documentation:
+
+  - Python wheel package and command-line entry point
+  - Databricks Asset Bundle job and restricted run permission
+  - Ephemeral single-node, non-Photon job cluster with 15-minute auto-termination
+  - No schedule, one concurrent run, bounded retries, and bounded task timeout
+  - Credential-free static bundle validator and unit tests
+  - Phase 4 architecture document and future deployment/runtime-test runbook
+
+  Pending final Azure deployment phase:
+
+  - Deploy the Databricks Asset Bundle
+  - Complete and validate account-level Unity Catalog prerequisites and grants
+  - Confirm regional Databricks Runtime and Azure node availability
+  - Run Spark/Delta against all Tiny manifests and validate physical tables and metrics
+  - Test idempotency, retry, drift, quarantine, zero-row input, and bounded backfill behavior
+  - Perform native bundle validation using a compatible CLI and authenticated workspace
+
+  The Phase 3 ADF-to-Databricks trigger remains deferred to a later orchestration phase;
+  Phase 4 currently provides a deployable parameterized Databricks workflow.
 
   ———
 

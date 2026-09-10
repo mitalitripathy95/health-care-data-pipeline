@@ -1,6 +1,6 @@
 # Healthcare Data Platform — Cloud-First Senior Data Engineering Plan
 
-**Status:** Planning only — implementation starts after approval
+**Status:** Phases 0–4 complete as code/static validation only; not deployed
 **Cloud:** Microsoft Azure trial subscription plus a Snowflake trial account hosted on Azure
 **Review date:** 2026-09-05
 **Data:** Synthetic data only
@@ -1020,38 +1020,65 @@ We will implement one phase at a time. At the end of every phase, the user recei
 
 ### Phase 3 — ADF Bronze raw ingestion
 
+**Implementation status:** Complete as code and statically validated. Azure deployment,
+source connectivity, ingestion execution, and runtime acceptance tests are deferred to the
+final end-to-end deployment phase.
+
 **Build**
 
-1. Deploy control schema and seed ingestion metadata for all tables.
-2. Create Key Vault-backed linked services and parameterized datasets.
-3. Implement master/child/validation pipelines.
-4. Implement full snapshots and composite-watermark incrementals.
-5. Implement manifests, locks, retries, and audit logging.
-6. Ingest Tiny initial data to immutable Bronze raw.
-7. Test duplicate trigger, identical timestamp, and partial failure.
+1. [Implemented as code] Deploy control schema and seed ingestion metadata for all tables.
+2. [Implemented as code] Create Key Vault-backed linked services and parameterized datasets.
+3. [Implemented as code] Implement master/child/validation pipelines.
+4. [Implemented as code] Implement full snapshots and composite-watermark incrementals.
+5. [Implemented as code] Implement manifests, locks, retries, and audit logging.
+6. [Deferred Azure test] Ingest Tiny initial data to immutable Bronze raw.
+7. [Deferred Azure tests] Test duplicate trigger, identical timestamp, and partial failure.
 
 **Exit criteria**
 
-- All source counts reconcile to successful manifests.
-- Failed runs do not advance watermarks.
-- Duplicate execution does not duplicate a published batch.
+- [Pending Azure runtime test] All source counts reconcile to successful manifests.
+- [Pending Azure runtime test] Failed runs do not advance watermarks.
+- [Pending Azure runtime test] Duplicate execution does not duplicate a published batch.
 
 ### Phase 4 — Databricks Bronze Delta and Unity Catalog
 
-**Build**
+**Implemented as repository code**
 
-1. Provision workspace/access connector and minimum UC objects.
-2. Apply cluster policy and permissions.
-3. Package common Spark code as a tested wheel.
-4. Deploy Bronze workflow using an Asset Bundle.
-5. Add schema drift, corrupt-row quarantine, audit metrics, and idempotency.
-6. Run all Tiny raw manifests into Bronze Delta.
+1. Phase 2 Terraform provisions the Azure Databricks workspace and access connector.
+2. A tested Python wheel reads Azure SQL control metadata or a controlled Delta manifest,
+   enforces immutable raw-path identities, and gates processing on published/reconciled
+   manifests and READY dependencies.
+3. Explicit versioned contracts cover all 19 Phase 1 source tables, with policies for
+   exact schemas, nullable additive columns, safe widening, and rejected breaking drift.
+4. Parquet plus controlled JSON/CSV readers, corrupt-record quarantine, source-aligned
+   Delta targets, nine operational metadata columns, and Delta registry/audit tables are
+   implemented.
+5. Batch/table idempotency, successful-rerun skips, deterministic batch-partition retries,
+   and independently auditable backfills are implemented.
+6. Successful explicit-batch processing transactionally publishes Azure SQL dependency
+   transitions from Bronze completion to Silver readiness.
+7. The Databricks Asset Bundle defines the wheel workflow, bounded retries, restricted job
+   permissions, no active schedule, one concurrent run, and an ephemeral non-Photon
+   single-node job cluster with 15-minute auto-termination.
+8. Credential-free bundle validation, pure unit tests, architecture documentation, and a
+   future deployment/runtime acceptance runbook are implemented.
+
+**Deferred until final cloud deployment/testing**
+
+1. Deploy the Databricks Asset Bundle and run the workflow in Azure.
+2. Attach/accept the account-level Unity Catalog metastore and configure the catalog,
+   schemas, storage credential, external locations, workspace bindings, and grants.
+3. Verify the selected Databricks Runtime and Azure VM node type are available regionally.
+4. Run all Tiny published manifests through Spark and validate physical Delta writes,
+   quarantine, schema evolution, audit metrics, reruns, retries, and backfills.
+5. Perform native workspace-backed bundle validation with a compatible Databricks CLI and
+   authenticated cloud configuration.
 
 **Exit criteria**
 
-- Bronze tables contain source rows plus metadata.
-- Exact rerun is a no-op.
-- Corrupt/breaking schemas fail safely.
+- [Pending Azure runtime test] Bronze tables contain source rows plus metadata.
+- [Pending Azure runtime test] Exact rerun is a no-op.
+- [Pending Azure runtime test] Corrupt/breaking schemas fail safely.
 
 ### Phase 5 — Silver Spark transformations and privacy
 

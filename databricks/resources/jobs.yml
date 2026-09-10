@@ -1,0 +1,160 @@
+resources:
+  jobs:
+    wf_bronze_ingestion:
+      name: wf_bronze_ingestion
+      description: Manifest-gated promotion of immutable ADF raw files into Bronze Delta.
+      max_concurrent_runs: 1
+      parameters:
+        - name: batch_id
+          default: ""
+        - name: source_filter
+          default: ALL
+        - name: manifest_path
+          default: ${var.manifest_path}
+        - name: catalog_name
+          default: ${var.catalog_name}
+        - name: bronze_schema
+          default: ${var.bronze_schema}
+        - name: quarantine_schema
+          default: ${var.quarantine_schema}
+        - name: control_jdbc_url
+          default: ${var.control_jdbc_url}
+        - name: secret_scope
+          default: ${var.secret_scope}
+      job_clusters:
+        - job_cluster_key: bronze_single_node
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
+            driver_node_type_id: ${var.node_type_id}
+            num_workers: 0
+            autotermination_minutes: 15
+            enable_elastic_disk: false
+            runtime_engine: STANDARD
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: local[*, 4]
+            custom_tags:
+              ResourceClass: SingleNode
+              Project: healthcare-data-pipeline
+              CostProfile: azure-trial
+      tasks:
+        - task_key: promote_raw_to_bronze
+          description: Validate manifests and schema contracts, quarantine corrupt records, and write Delta.
+          job_cluster_key: bronze_single_node
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          retry_on_timeout: true
+          timeout_seconds: 7200
+          python_wheel_task:
+            package_name: healthcare_bronze
+            entry_point: healthcare-bronze
+            parameters:
+              - --batch-id
+              - "{{job.parameters.batch_id}}"
+              - --source-filter
+              - "{{job.parameters.source_filter}}"
+              - --manifest-path
+              - "{{job.parameters.manifest_path}}"
+              - --catalog-name
+              - "{{job.parameters.catalog_name}}"
+              - --bronze-schema
+              - "{{job.parameters.bronze_schema}}"
+              - --quarantine-schema
+              - "{{job.parameters.quarantine_schema}}"
+              - --control-jdbc-url
+              - "{{job.parameters.control_jdbc_url}}"
+              - --secret-scope
+              - "{{job.parameters.secret_scope}}"
+          libraries:
+            - whl: ./dist/*.whl
+    wf_silver_transformation:
+      name: wf_silver_transformation
+      description: Standardize, quality-check, tokenize, and publish Bronze data to Silver Delta.
+      max_concurrent_runs: 1
+      parameters:
+        - name: batch_id
+          default: ""
+        - name: source_filter
+          default: ALL
+        - name: catalog_name
+          default: ${var.catalog_name}
+        - name: bronze_schema
+          default: ${var.bronze_schema}
+        - name: restricted_schema
+          default: ${var.restricted_schema}
+        - name: deidentified_schema
+          default: ${var.deidentified_schema}
+        - name: quarantine_schema
+          default: ${var.quarantine_schema}
+        - name: control_jdbc_url
+          default: ${var.control_jdbc_url}
+        - name: secret_scope
+          default: ${var.secret_scope}
+        - name: hmac_key_name
+          default: ${var.hmac_key_name}
+        - name: token_version
+          default: ${var.token_version}
+        - name: transform_version
+          default: ${var.transform_version}
+        - name: event_watermark
+          default: ${var.event_watermark}
+      job_clusters:
+        - job_cluster_key: silver_single_node
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
+            driver_node_type_id: ${var.node_type_id}
+            num_workers: 0
+            autotermination_minutes: 15
+            enable_elastic_disk: false
+            runtime_engine: STANDARD
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: local[*, 4]
+            custom_tags:
+              ResourceClass: SingleNode
+              Project: healthcare-data-pipeline
+              CostProfile: azure-trial
+      tasks:
+        - task_key: transform_bronze_to_silver
+          description: Apply Silver conformance, DQ quarantine, reconciliation, and tokenization.
+          job_cluster_key: silver_single_node
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          retry_on_timeout: true
+          timeout_seconds: 7200
+          python_wheel_task:
+            package_name: healthcare_bronze
+            entry_point: healthcare-silver
+            parameters:
+              - --batch-id
+              - "{{job.parameters.batch_id}}"
+              - --source-filter
+              - "{{job.parameters.source_filter}}"
+              - --catalog-name
+              - "{{job.parameters.catalog_name}}"
+              - --bronze-schema
+              - "{{job.parameters.bronze_schema}}"
+              - --restricted-schema
+              - "{{job.parameters.restricted_schema}}"
+              - --deidentified-schema
+              - "{{job.parameters.deidentified_schema}}"
+              - --quarantine-schema
+              - "{{job.parameters.quarantine_schema}}"
+              - --control-jdbc-url
+              - "{{job.parameters.control_jdbc_url}}"
+              - --secret-scope
+              - "{{job.parameters.secret_scope}}"
+              - --hmac-key-name
+              - "{{job.parameters.hmac_key_name}}"
+              - --token-version
+              - "{{job.parameters.token_version}}"
+              - --transform-version
+              - "{{job.parameters.transform_version}}"
+              - --event-watermark
+              - "{{job.parameters.event_watermark}}"
+          libraries:
+            - whl: ./dist/*.whl

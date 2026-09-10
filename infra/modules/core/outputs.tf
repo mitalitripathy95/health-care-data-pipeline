@@ -1,0 +1,11 @@
+output "resource_group_name" { value = azurerm_resource_group.this.name }
+output "resource_group_id" { value = azurerm_resource_group.this.id }
+output "storage_account_name" { value = azurerm_storage_account.lake.name }
+output "storage_account_id" { value = azurerm_storage_account.lake.id }
+output "storage_filesystem_name" { value = azurerm_storage_data_lake_gen2_filesystem.lake.name }
+output "storage_dfs_endpoint" { value = azurerm_storage_account.lake.primary_dfs_endpoint }
+output "key_vault_name" { value = azurerm_key_vault.this.name }
+output "key_vault_id" { value = azurerm_key_vault.this.id }
+output "key_vault_uri" { value = azurerm_key_vault.this.vault_uri }
+output "acr_login_server" { value = try(azurerm_container_registry.this[0].login_server, null) }
+output "acr_id" { value = try(azurerm_container_registry.this[0].id, null) }

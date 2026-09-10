@@ -1,0 +1,456 @@
+[
+  {
+    "name": "Set Bronze path",
+    "type": "SetVariable",
+    "typeProperties": {
+      "variableName": "bronze_path",
+      "value": {
+        "type": "Expression",
+        "value": "@concat('bronze/raw/source=', pipeline().parameters.source_system, '/schema=', pipeline().parameters.source_schema, '/table=', pipeline().parameters.source_table, '/batch_id=', pipeline().parameters.batch_id, '/run_id=', pipeline().RunId)"
+      }
+    }
+  },
+  {
+    "name": "Begin table run and acquire lock",
+    "type": "SqlServerStoredProcedure",
+    "dependsOn": [{ "activity": "Set Bronze path", "dependencyConditions": ["Succeeded"] }],
+    "policy": ${activity_policy},
+    "linkedServiceName": { "referenceName": "${azure_sql_linked_service}", "type": "LinkedServiceReference" },
+    "typeProperties": {
+      "storedProcedureName": "control.usp_begin_table_run",
+      "storedProcedureParameters": {
+        "table_run_id": { "value": { "type": "Expression", "value": "@pipeline().RunId" }, "type": "Guid" },
+        "pipeline_run_id": { "value": { "type": "Expression", "value": "@pipeline().parameters.pipeline_run_id" }, "type": "Guid" },
+        "ingestion_config_id": { "value": { "type": "Expression", "value": "@int(pipeline().parameters.ingestion_config_id)" }, "type": "Int32" },
+        "lock_minutes": { "value": 120, "type": "Int32" }
+      }
+    }
+  },
+  {
+    "name": "Read committed watermark",
+    "type": "Lookup",
+    "dependsOn": [{ "activity": "Begin table run and acquire lock", "dependencyConditions": ["Succeeded"] }],
+    "policy": ${activity_policy},
+    "typeProperties": {
+      "source": {
+        "type": "AzureSqlSource",
+        "sqlReaderQuery": {
+          "type": "Expression",
+          "value": "@concat('SELECT COALESCE((SELECT CONVERT(varchar(33), last_committed_ts, 127) FROM control.watermark_state WHERE ingestion_config_id=', pipeline().parameters.ingestion_config_id, '), ''1900-01-01T00:00:00.000'') AS low_ts, COALESCE((SELECT last_committed_key FROM control.watermark_state WHERE ingestion_config_id=', pipeline().parameters.ingestion_config_id, '), ''0'') AS low_key')"
+        }
+      },
+      "dataset": {
+        "referenceName": "${azure_sql_dataset}",
+        "type": "DatasetReference",
+        "parameters": { "source_schema": "control", "source_table": "watermark_state" }
+      },
+      "firstRowOnly": true
+    }
+  },
+  {
+    "name": "Set effective low timestamp",
+    "type": "SetVariable",
+    "dependsOn": [{ "activity": "Read committed watermark", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": {
+      "variableName": "low_watermark_ts",
+      "value": {
+        "type": "Expression",
+        "value": "@if(empty(pipeline().parameters.backfill_start), activity('Read committed watermark').output.firstRow.low_ts, pipeline().parameters.backfill_start)"
+      }
+    }
+  },
+  {
+    "name": "Set effective low key",
+    "type": "SetVariable",
+    "dependsOn": [{ "activity": "Set effective low timestamp", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": {
+      "variableName": "low_watermark_key",
+      "value": {
+        "type": "Expression",
+        "value": "@if(empty(pipeline().parameters.backfill_start), activity('Read committed watermark').output.firstRow.low_key, '0')"
+      }
+    }
+  },
+  {
+    "name": "Route source connector",
+    "type": "IfCondition",
+    "dependsOn": [{ "activity": "Set effective low key", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": {
+      "expression": { "type": "Expression", "value": "@equals(pipeline().parameters.source_engine, 'POSTGRESQL')" },
+      "ifTrueActivities": [
+        {
+          "name": "PostgreSQL load mode",
+          "type": "IfCondition",
+          "typeProperties": {
+            "expression": { "type": "Expression", "value": "@equals(pipeline().parameters.load_type, 'INCREMENTAL')" },
+            "ifTrueActivities": [
+              {
+                "name": "Capture PostgreSQL bounded high watermark",
+                "type": "Lookup",
+                "policy": ${activity_policy},
+                "typeProperties": {
+                  "source": {
+                    "type": "PostgreSqlV2Source",
+                    "query": {
+                      "type": "Expression",
+                      "value": "@concat('WITH bounded AS (SELECT ', pipeline().parameters.watermark_column, ' AS high_ts, ', pipeline().parameters.primary_key_column, ' AS high_key FROM ', pipeline().parameters.source_schema, '.', pipeline().parameters.source_table, ' WHERE (', pipeline().parameters.watermark_column, ' > CAST(''''', variables('low_watermark_ts'), '''' AS timestamp) OR (', pipeline().parameters.watermark_column, ' = CAST(''''', variables('low_watermark_ts'), '''' AS timestamp) AND ', pipeline().parameters.primary_key_column, ' > ', variables('low_watermark_key'), '))', if(empty(pipeline().parameters.backfill_end), '', concat(' AND ', pipeline().parameters.watermark_column, ' <= CAST(''''', pipeline().parameters.backfill_end, '''' AS timestamp)')), '), high AS (SELECT high_ts, high_key FROM bounded ORDER BY high_ts DESC, high_key DESC LIMIT 1) SELECT CAST((SELECT COUNT(*) FROM bounded) AS VARCHAR(30)) AS source_count, COALESCE(CAST(high_ts AS VARCHAR(33)), '''') AS high_ts, COALESCE(CAST(high_key AS VARCHAR(200)), '''') AS high_key FROM (SELECT 1) seed LEFT JOIN high ON TRUE')"
+                    }
+                  },
+                  "dataset": {
+                    "referenceName": "${postgresql_dataset}",
+                    "type": "DatasetReference",
+                    "parameters": { "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" } }
+                  },
+                  "firstRowOnly": true
+                }
+              },
+              {
+                "name": "Set PostgreSQL high timestamp",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Capture PostgreSQL bounded high watermark", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "high_watermark_ts", "value": { "type": "Expression", "value": "@activity('Capture PostgreSQL bounded high watermark').output.firstRow.high_ts" } }
+              },
+              {
+                "name": "Set PostgreSQL high key",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Set PostgreSQL high timestamp", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "high_watermark_key", "value": { "type": "Expression", "value": "@activity('Capture PostgreSQL bounded high watermark').output.firstRow.high_key" } }
+              },
+              {
+                "name": "PostgreSQL interval has rows",
+                "type": "IfCondition",
+                "dependsOn": [{ "activity": "Set PostgreSQL high key", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": {
+                  "expression": { "type": "Expression", "value": "@greater(int(activity('Capture PostgreSQL bounded high watermark').output.firstRow.source_count), 0)" },
+                  "ifTrueActivities": [
+                    {
+                      "name": "Copy PostgreSQL bounded interval",
+                      "type": "Copy",
+                      "policy": ${activity_policy},
+                      "typeProperties": {
+                        "source": {
+                          "type": "PostgreSqlV2Source",
+                          "query": {
+                            "type": "Expression",
+                            "value": "@concat('SELECT * FROM ', pipeline().parameters.source_schema, '.', pipeline().parameters.source_table, ' WHERE (', pipeline().parameters.watermark_column, ' > CAST(''''', variables('low_watermark_ts'), '''' AS timestamp) OR (', pipeline().parameters.watermark_column, ' = CAST(''''', variables('low_watermark_ts'), '''' AS timestamp) AND ', pipeline().parameters.primary_key_column, ' > ', variables('low_watermark_key'), ')) AND (', pipeline().parameters.watermark_column, ' < CAST(''''', variables('high_watermark_ts'), '''' AS timestamp) OR (', pipeline().parameters.watermark_column, ' = CAST(''''', variables('high_watermark_ts'), '''' AS timestamp) AND ', pipeline().parameters.primary_key_column, ' <= ', variables('high_watermark_key'), ')) ORDER BY ', pipeline().parameters.watermark_column, ', ', pipeline().parameters.primary_key_column)"
+                          }
+                        },
+                        "sink": { "type": "ParquetSink", "storeSettings": { "type": "AzureBlobFSWriteSettings" }, "formatSettings": { "type": "ParquetWriteSettings" } },
+                        "enableStaging": false
+                      },
+                      "inputs": [{ "referenceName": "${postgresql_dataset}", "type": "DatasetReference", "parameters": { "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" } } }],
+                      "outputs": [{ "referenceName": "${bronze_dataset}", "type": "DatasetReference", "parameters": { "source_system": { "type": "Expression", "value": "@pipeline().parameters.source_system" }, "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" }, "batch_id": { "type": "Expression", "value": "@pipeline().parameters.batch_id" }, "run_id": { "type": "Expression", "value": "@pipeline().RunId" } } }]
+                    },
+                    {
+                      "name": "Set PostgreSQL incremental source rows",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Copy PostgreSQL bounded interval", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "source_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy PostgreSQL bounded interval').output.rowsRead)" } }
+                    },
+                    {
+                      "name": "Set PostgreSQL incremental landed rows",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set PostgreSQL incremental source rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "landed_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy PostgreSQL bounded interval').output.rowsCopied)" } }
+                    },
+                    {
+                      "name": "Set PostgreSQL incremental file count",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set PostgreSQL incremental landed rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "file_count", "value": { "type": "Expression", "value": "@string(activity('Copy PostgreSQL bounded interval').output.filesWritten)" } }
+                    }
+                  ],
+                  "ifFalseActivities": [
+                    {
+                      "name": "Set empty PostgreSQL source rows",
+                      "type": "SetVariable",
+                      "typeProperties": { "variableName": "source_row_count", "value": "0" }
+                    },
+                    {
+                      "name": "Set empty PostgreSQL landed rows",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set empty PostgreSQL source rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "landed_row_count", "value": "0" }
+                    },
+                    {
+                      "name": "Set empty PostgreSQL file count",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set empty PostgreSQL landed rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "file_count", "value": "0" }
+                    }
+                  ]
+                }
+              }
+            ],
+            "ifFalseActivities": [
+              {
+                "name": "Copy PostgreSQL full snapshot",
+                "type": "Copy",
+                "policy": ${activity_policy},
+                "typeProperties": {
+                  "source": { "type": "PostgreSqlV2Source", "query": { "type": "Expression", "value": "@pipeline().parameters.extraction_sql" } },
+                  "sink": { "type": "ParquetSink", "storeSettings": { "type": "AzureBlobFSWriteSettings" }, "formatSettings": { "type": "ParquetWriteSettings" } },
+                  "enableStaging": false
+                },
+                "inputs": [{ "referenceName": "${postgresql_dataset}", "type": "DatasetReference", "parameters": { "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" } } }],
+                "outputs": [{ "referenceName": "${bronze_dataset}", "type": "DatasetReference", "parameters": { "source_system": { "type": "Expression", "value": "@pipeline().parameters.source_system" }, "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" }, "batch_id": { "type": "Expression", "value": "@pipeline().parameters.batch_id" }, "run_id": { "type": "Expression", "value": "@pipeline().RunId" } } }]
+              },
+              {
+                "name": "Set PostgreSQL full source rows",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Copy PostgreSQL full snapshot", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "source_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy PostgreSQL full snapshot').output.rowsRead)" } }
+              },
+              {
+                "name": "Set PostgreSQL full landed rows",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Set PostgreSQL full source rows", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "landed_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy PostgreSQL full snapshot').output.rowsCopied)" } }
+              },
+              {
+                "name": "Set PostgreSQL full file count",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Set PostgreSQL full landed rows", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "file_count", "value": { "type": "Expression", "value": "@string(activity('Copy PostgreSQL full snapshot').output.filesWritten)" } }
+              }
+            ]
+          }
+        }
+      ],
+      "ifFalseActivities": [
+        {
+          "name": "Azure SQL load mode",
+          "type": "IfCondition",
+          "typeProperties": {
+            "expression": { "type": "Expression", "value": "@equals(pipeline().parameters.load_type, 'INCREMENTAL')" },
+            "ifTrueActivities": [
+              {
+                "name": "Capture Azure SQL bounded high watermark",
+                "type": "Lookup",
+                "policy": ${activity_policy},
+                "typeProperties": {
+                  "source": {
+                    "type": "AzureSqlSource",
+                    "sqlReaderQuery": {
+                      "type": "Expression",
+                      "value": "@concat('WITH bounded AS (SELECT ', pipeline().parameters.watermark_column, ' AS high_ts, ', pipeline().parameters.primary_key_column, ' AS high_key FROM ', pipeline().parameters.source_schema, '.', pipeline().parameters.source_table, ' WHERE (', pipeline().parameters.watermark_column, ' > CAST(''''', variables('low_watermark_ts'), '''' AS datetime2(3)) OR (', pipeline().parameters.watermark_column, ' = CAST(''''', variables('low_watermark_ts'), '''' AS datetime2(3)) AND ', pipeline().parameters.primary_key_column, ' > ', variables('low_watermark_key'), '))', if(empty(pipeline().parameters.backfill_end), '', concat(' AND ', pipeline().parameters.watermark_column, ' <= CAST(''''', pipeline().parameters.backfill_end, '''' AS datetime2(3))')), '), high AS (SELECT TOP (1) high_ts, high_key FROM bounded ORDER BY high_ts DESC, high_key DESC) SELECT CONVERT(varchar(30), COUNT_BIG(1)) AS source_count, COALESCE(CONVERT(varchar(33), MAX(high.high_ts), 127), '''') AS high_ts, COALESCE(CONVERT(varchar(200), MAX(high.high_key)), '''') AS high_key FROM bounded LEFT JOIN high ON 1=1')"
+                    }
+                  },
+                  "dataset": {
+                    "referenceName": "${azure_sql_dataset}",
+                    "type": "DatasetReference",
+                    "parameters": { "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" } }
+                  },
+                  "firstRowOnly": true
+                }
+              },
+              {
+                "name": "Set Azure SQL high timestamp",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Capture Azure SQL bounded high watermark", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "high_watermark_ts", "value": { "type": "Expression", "value": "@activity('Capture Azure SQL bounded high watermark').output.firstRow.high_ts" } }
+              },
+              {
+                "name": "Set Azure SQL high key",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Set Azure SQL high timestamp", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "high_watermark_key", "value": { "type": "Expression", "value": "@activity('Capture Azure SQL bounded high watermark').output.firstRow.high_key" } }
+              },
+              {
+                "name": "Azure SQL interval has rows",
+                "type": "IfCondition",
+                "dependsOn": [{ "activity": "Set Azure SQL high key", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": {
+                  "expression": { "type": "Expression", "value": "@greater(int(activity('Capture Azure SQL bounded high watermark').output.firstRow.source_count), 0)" },
+                  "ifTrueActivities": [
+                    {
+                      "name": "Copy Azure SQL bounded interval",
+                      "type": "Copy",
+                      "policy": ${activity_policy},
+                      "typeProperties": {
+                        "source": {
+                          "type": "AzureSqlSource",
+                          "sqlReaderQuery": {
+                            "type": "Expression",
+                            "value": "@concat('SELECT * FROM ', pipeline().parameters.source_schema, '.', pipeline().parameters.source_table, ' WHERE (', pipeline().parameters.watermark_column, ' > CAST(''''', variables('low_watermark_ts'), '''' AS datetime2(3)) OR (', pipeline().parameters.watermark_column, ' = CAST(''''', variables('low_watermark_ts'), '''' AS datetime2(3)) AND ', pipeline().parameters.primary_key_column, ' > ', variables('low_watermark_key'), ')) AND (', pipeline().parameters.watermark_column, ' < CAST(''''', variables('high_watermark_ts'), '''' AS datetime2(3)) OR (', pipeline().parameters.watermark_column, ' = CAST(''''', variables('high_watermark_ts'), '''' AS datetime2(3)) AND ', pipeline().parameters.primary_key_column, ' <= ', variables('high_watermark_key'), ')) ORDER BY ', pipeline().parameters.watermark_column, ', ', pipeline().parameters.primary_key_column)"
+                          }
+                        },
+                        "sink": { "type": "ParquetSink", "storeSettings": { "type": "AzureBlobFSWriteSettings" }, "formatSettings": { "type": "ParquetWriteSettings" } },
+                        "enableStaging": false
+                      },
+                      "inputs": [{ "referenceName": "${azure_sql_dataset}", "type": "DatasetReference", "parameters": { "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" } } }],
+                      "outputs": [{ "referenceName": "${bronze_dataset}", "type": "DatasetReference", "parameters": { "source_system": { "type": "Expression", "value": "@pipeline().parameters.source_system" }, "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" }, "batch_id": { "type": "Expression", "value": "@pipeline().parameters.batch_id" }, "run_id": { "type": "Expression", "value": "@pipeline().RunId" } } }]
+                    },
+                    {
+                      "name": "Set Azure SQL incremental source rows",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Copy Azure SQL bounded interval", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "source_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy Azure SQL bounded interval').output.rowsRead)" } }
+                    },
+                    {
+                      "name": "Set Azure SQL incremental landed rows",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set Azure SQL incremental source rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "landed_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy Azure SQL bounded interval').output.rowsCopied)" } }
+                    },
+                    {
+                      "name": "Set Azure SQL incremental file count",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set Azure SQL incremental landed rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "file_count", "value": { "type": "Expression", "value": "@string(activity('Copy Azure SQL bounded interval').output.filesWritten)" } }
+                    }
+                  ],
+                  "ifFalseActivities": [
+                    {
+                      "name": "Set empty Azure SQL source rows",
+                      "type": "SetVariable",
+                      "typeProperties": { "variableName": "source_row_count", "value": "0" }
+                    },
+                    {
+                      "name": "Set empty Azure SQL landed rows",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set empty Azure SQL source rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "landed_row_count", "value": "0" }
+                    },
+                    {
+                      "name": "Set empty Azure SQL file count",
+                      "type": "SetVariable",
+                      "dependsOn": [{ "activity": "Set empty Azure SQL landed rows", "dependencyConditions": ["Succeeded"] }],
+                      "typeProperties": { "variableName": "file_count", "value": "0" }
+                    }
+                  ]
+                }
+              }
+            ],
+            "ifFalseActivities": [
+              {
+                "name": "Copy Azure SQL full snapshot",
+                "type": "Copy",
+                "policy": ${activity_policy},
+                "typeProperties": {
+                  "source": { "type": "AzureSqlSource", "sqlReaderQuery": { "type": "Expression", "value": "@pipeline().parameters.extraction_sql" } },
+                  "sink": { "type": "ParquetSink", "storeSettings": { "type": "AzureBlobFSWriteSettings" }, "formatSettings": { "type": "ParquetWriteSettings" } },
+                  "enableStaging": false
+                },
+                "inputs": [{ "referenceName": "${azure_sql_dataset}", "type": "DatasetReference", "parameters": { "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" } } }],
+                "outputs": [{ "referenceName": "${bronze_dataset}", "type": "DatasetReference", "parameters": { "source_system": { "type": "Expression", "value": "@pipeline().parameters.source_system" }, "source_schema": { "type": "Expression", "value": "@pipeline().parameters.source_schema" }, "source_table": { "type": "Expression", "value": "@pipeline().parameters.source_table" }, "batch_id": { "type": "Expression", "value": "@pipeline().parameters.batch_id" }, "run_id": { "type": "Expression", "value": "@pipeline().RunId" } } }]
+              },
+              {
+                "name": "Set Azure SQL full source rows",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Copy Azure SQL full snapshot", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "source_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy Azure SQL full snapshot').output.rowsRead)" } }
+              },
+              {
+                "name": "Set Azure SQL full landed rows",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Set Azure SQL full source rows", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "landed_row_count", "value": { "type": "Expression", "value": "@string(activity('Copy Azure SQL full snapshot').output.rowsCopied)" } }
+              },
+              {
+                "name": "Set Azure SQL full file count",
+                "type": "SetVariable",
+                "dependsOn": [{ "activity": "Set Azure SQL full landed rows", "dependencyConditions": ["Succeeded"] }],
+                "typeProperties": { "variableName": "file_count", "value": { "type": "Expression", "value": "@string(activity('Copy Azure SQL full snapshot').output.filesWritten)" } }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "Validate immutable landing",
+    "type": "ExecutePipeline",
+    "dependsOn": [{ "activity": "Route source connector", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": {
+      "pipeline": { "referenceName": "${validation_pipeline}", "type": "PipelineReference" },
+      "waitOnCompletion": true,
+      "parameters": {
+        "source_row_count": { "type": "Expression", "value": "@variables('source_row_count')" },
+        "landed_row_count": { "type": "Expression", "value": "@variables('landed_row_count')" },
+        "file_count": { "type": "Expression", "value": "@variables('file_count')" },
+        "bronze_path": { "type": "Expression", "value": "@variables('bronze_path')" }
+      }
+    }
+  },
+  {
+    "name": "Publish table run",
+    "type": "SqlServerStoredProcedure",
+    "dependsOn": [{ "activity": "Validate immutable landing", "dependencyConditions": ["Succeeded"] }],
+    "policy": ${activity_policy},
+    "linkedServiceName": { "referenceName": "${azure_sql_linked_service}", "type": "LinkedServiceReference" },
+    "typeProperties": {
+      "storedProcedureName": "control.usp_publish_table_run",
+      "storedProcedureParameters": {
+        "table_run_id": { "value": { "type": "Expression", "value": "@pipeline().RunId" }, "type": "Guid" },
+        "batch_id": { "value": { "type": "Expression", "value": "@pipeline().parameters.batch_id" }, "type": "String" },
+        "low_ts": { "value": { "type": "Expression", "value": "@if(equals(pipeline().parameters.load_type, 'FULL'), null, variables('low_watermark_ts'))" }, "type": "DateTime" },
+        "low_key": { "value": { "type": "Expression", "value": "@if(equals(pipeline().parameters.load_type, 'FULL'), null, variables('low_watermark_key'))" }, "type": "String" },
+        "high_ts": { "value": { "type": "Expression", "value": "@if(empty(variables('high_watermark_ts')), null, variables('high_watermark_ts'))" }, "type": "DateTime" },
+        "high_key": { "value": { "type": "Expression", "value": "@if(empty(variables('high_watermark_key')), null, variables('high_watermark_key'))" }, "type": "String" },
+        "source_rows": { "value": { "type": "Expression", "value": "@int(variables('source_row_count'))" }, "type": "Int64" },
+        "landed_rows": { "value": { "type": "Expression", "value": "@int(variables('landed_row_count'))" }, "type": "Int64" },
+        "file_count": { "value": { "type": "Expression", "value": "@int(variables('file_count'))" }, "type": "Int32" },
+        "bronze_path": { "value": { "type": "Expression", "value": "@variables('bronze_path')" }, "type": "String" },
+        "advance_watermark": { "value": { "type": "Expression", "value": "@and(empty(pipeline().parameters.backfill_start), empty(pipeline().parameters.backfill_end))" }, "type": "Boolean" }
+      }
+    }
+  },
+  {
+    "name": "Fail table after watermark read error",
+    "type": "SqlServerStoredProcedure",
+    "dependsOn": [{ "activity": "Read committed watermark", "dependencyConditions": ["Failed"] }],
+    "policy": ${activity_policy},
+    "linkedServiceName": { "referenceName": "${azure_sql_linked_service}", "type": "LinkedServiceReference" },
+    "typeProperties": { "storedProcedureName": "control.usp_fail_table_run", "storedProcedureParameters": { "table_run_id": { "value": { "type": "Expression", "value": "@pipeline().RunId" }, "type": "Guid" }, "error_message": { "value": "Watermark lookup failed. Inspect ADF activity output.", "type": "String" } } }
+  },
+  {
+    "name": "Raise watermark read failure",
+    "type": "Fail",
+    "dependsOn": [{ "activity": "Fail table after watermark read error", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": { "errorCode": "WATERMARK_READ_FAILED", "message": "The table run failed while reading its committed watermark." }
+  },
+  {
+    "name": "Fail table after extraction error",
+    "type": "SqlServerStoredProcedure",
+    "dependsOn": [{ "activity": "Route source connector", "dependencyConditions": ["Failed"] }],
+    "policy": ${activity_policy},
+    "linkedServiceName": { "referenceName": "${azure_sql_linked_service}", "type": "LinkedServiceReference" },
+    "typeProperties": { "storedProcedureName": "control.usp_fail_table_run", "storedProcedureParameters": { "table_run_id": { "value": { "type": "Expression", "value": "@pipeline().RunId" }, "type": "Guid" }, "error_message": { "value": "Source extraction or Bronze copy failed. Inspect ADF activity output.", "type": "String" } } }
+  },
+  {
+    "name": "Raise extraction failure",
+    "type": "Fail",
+    "dependsOn": [{ "activity": "Fail table after extraction error", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": { "errorCode": "TABLE_EXTRACTION_FAILED", "message": "The source extraction or immutable Bronze copy failed." }
+  },
+  {
+    "name": "Fail table after validation error",
+    "type": "SqlServerStoredProcedure",
+    "dependsOn": [{ "activity": "Validate immutable landing", "dependencyConditions": ["Failed"] }],
+    "policy": ${activity_policy},
+    "linkedServiceName": { "referenceName": "${azure_sql_linked_service}", "type": "LinkedServiceReference" },
+    "typeProperties": { "storedProcedureName": "control.usp_fail_table_run", "storedProcedureParameters": { "table_run_id": { "value": { "type": "Expression", "value": "@pipeline().RunId" }, "type": "Guid" }, "error_message": { "value": "Landing validation failed. Manifest and watermark were not published.", "type": "String" } } }
+  },
+  {
+    "name": "Raise landing validation failure",
+    "type": "Fail",
+    "dependsOn": [{ "activity": "Fail table after validation error", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": { "errorCode": "TABLE_VALIDATION_FAILED", "message": "Landing validation failed; publication was blocked." }
+  },
+  {
+    "name": "Fail table after publication error",
+    "type": "SqlServerStoredProcedure",
+    "dependsOn": [{ "activity": "Publish table run", "dependencyConditions": ["Failed"] }],
+    "policy": ${activity_policy},
+    "linkedServiceName": { "referenceName": "${azure_sql_linked_service}", "type": "LinkedServiceReference" },
+    "typeProperties": { "storedProcedureName": "control.usp_fail_table_run", "storedProcedureParameters": { "table_run_id": { "value": { "type": "Expression", "value": "@pipeline().RunId" }, "type": "Guid" }, "error_message": { "value": "Transactional manifest or watermark publication failed.", "type": "String" } } }
+  },
+  {
+    "name": "Raise publication failure",
+    "type": "Fail",
+    "dependsOn": [{ "activity": "Fail table after publication error", "dependencyConditions": ["Succeeded"] }],
+    "typeProperties": { "errorCode": "TABLE_PUBLICATION_FAILED", "message": "Transactional table-run publication failed." }
+  }
+]

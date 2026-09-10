@@ -1,0 +1,15 @@
+location              = "eastus"
+environment           = "demo"
+project_name          = "healthcare-data-pipeline"
+resource_suffix       = "replace123"
+data_profile          = "tiny"
+monthly_budget_amount = 150
+
+# Do not put credentials in this file. Inject these as environment variables:
+# export TF_VAR_subscription_id="..."
+# export TF_VAR_tenant_id="..."
+# export TF_VAR_sql_admin_login="..."
+# export TF_VAR_sql_admin_password="..."
+# export TF_VAR_postgres_admin_password="..."
+# export TF_VAR_alert_email="you@example.com"
+
